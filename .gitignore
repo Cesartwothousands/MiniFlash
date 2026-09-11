@@ -8,3 +8,7 @@ build/
 out/
 docs/_build/
 .bench-stage/
+
+.install-tmp/
+experiments/results/
+.pytest_cache/

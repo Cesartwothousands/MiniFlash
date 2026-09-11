@@ -155,6 +155,9 @@ def check_program(program):
     :param program: Program.
     :returns: list[str] error messages (empty = valid).
     """
+    if program.factory_mode != "auto":
+        from .physical import check
+        return check(program)
     return _check_nets(program) + _check_channels(program) + _check_die(program) + _check_injections(program)
 
 @dataclass
@@ -706,6 +709,9 @@ def build_layout(program):
         circuit has injections.
     :raises RuntimeError: when the IR check fails.
     """
+    if program.factory_mode != "auto":
+        from .physical import statistics
+        return statistics(program)
     plan = _plan(program)
     extent = _Extent()
     for pipe in _pipes_of(program, plan):

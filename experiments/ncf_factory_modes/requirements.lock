@@ -1,0 +1,17 @@
+# Isolated runtime for vendor/miniflash at
+# 4f969deb1936d9c7d148519754b192aa48e5dfa2.
+#
+# Keep this environment separate from NCF's pinned Qiskit stack.  Direct and
+# transitive versions were frozen from the upstream-compatible Python 3.10
+# environment used for the integration tests.
+dill==0.4.1
+networkx==3.4.2
+numpy==2.2.6
+qiskit==2.5.1
+rustworkx==0.18.1
+scipy==1.15.3
+stevedore==5.8.0
+stim==1.16.0
+stimzx @ git+https://github.com/quantumlib/Stim.git@0fdddef863cfe777f3f2086a092ba99785725c07#subdirectory=glue/zx
+typing_extensions==4.16.0
+z3-solver==5.0.0.0

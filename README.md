@@ -65,3 +65,11 @@ flash.write_gltf(program, "layout.gltf")
 import json
 json.dump(program.stats(), open("stats.json", "w"), indent=2)   # volumes, pauli frames, T corrections
 ```
+
+## Explicit factory placement
+
+Use `--factory-mode auto|backside|in_place|in_place_joint` to select the
+factory fabric. Joint mode embeds all reserved factories in a shared planar
+layout and derives injection parallelism from actual route conflicts.
+See [the physical model](docs/factory_modes.rst) and the
+[fixed-QASM NCF campaign](experiments/ncf_factory_modes/README.md).

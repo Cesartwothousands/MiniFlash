@@ -13,7 +13,7 @@ from pathlib import Path
 import miniflash as flash
 
 
-def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False, use_sat=False, fixed_columns=False):
+def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False, use_sat=False, fixed_columns=False, factory_mode="auto", planner_candidates=8):
     """Compile a circuit to the Program IR: parse -> partition -> synthesize -> elaborate.
 
     Partitioning is coarse-first: regions start at whole-circuit granularity
@@ -26,13 +26,20 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     :param side_ports: bool, swap through cell side faces.
     :param factory: str preset name or FactorySpec.
     :param die_dims: (width, rows | None) or None for 1-D.
-    :param factories: int, magic state factory units.
+    :param factories: int, reserved magic state factory units.
+    :param factory_mode: auto (legacy), backside, in_place (two enabled sources),
+        or in_place_joint (embedded factories and data planned together).
+    :param planner_candidates: bounded joint layout search budget, default 8.
     :param budget_s: int, processing budget in seconds per region.
     :param use_sat: bool, SAT-solve uncached regions; False (default) serves
         cache hits and templates everything else.
     :param orientation: bool, lay deep cells down when that shortens their layer (1-D only).
     :returns: Program.
     """
+    from miniflash.physical import validate_mode
+    validate_mode(factory_mode)
+    if factory_mode != "auto" and (orientation or side_ports or fixed_columns):
+        raise ValueError("physical factory modes require upright cells and ordinary ports (orientation/side_ports/fixed_columns=False)")
     circuit = flash.parse(qasm_path)
     top = min(circuit.num_qubits, 16)
     caps = [top] + [cap for cap in (12, 8, 6, 4, 2) if cap < top]
@@ -66,7 +73,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
             for sub in subs:
                 rung_of[id(sub)] = rung
 
-    return flash.elaborate(floorplan, cells, events=events, channels=channels, factory=factory_spec, factories=factories)
+    return flash.elaborate(floorplan, cells, events=events, channels=channels, factory=factory_spec, factories=factories, factory_mode=factory_mode, planner_candidates=planner_candidates)
 
 
 def main():
@@ -77,6 +84,8 @@ def main():
     parser = argparse.ArgumentParser(description="Compile a Clifford+T OpenQASM 2.0 circuit into a lattice-surgery layout (glTF 2.0)")
     parser.add_argument("qasm",                                              help="input .qasm file")
     parser.add_argument("-o", "--out",                                       help="write the glTF scene to this path (default: stats only, no glTF)")
+    parser.add_argument("--factory-mode", choices=("auto", "backside", "in_place", "in_place_joint"), default="auto", help="factory placement and injection policy")
+    parser.add_argument("--planner-candidates", type=int, default=8, help="joint layout candidate budget")
     parser.add_argument("--factory",     default="15-to-1",                  help=f"magic state factory: {' | '.join(sorted(flash.FACTORIES))} or custom IxJxK dims (e.g. 6x2x11)")
     parser.add_argument("--die",         type=int, metavar="WIDTH",          help="die width constraint (rows grow on demand)")
     parser.add_argument("--factories",   type=int, default=1,                help="factory units (die mode)")
@@ -95,6 +104,8 @@ def main():
             parser.error(f"--factory: {factory!r} is neither a preset ({', '.join(sorted(flash.FACTORIES))}) nor IxJxK dims")
     program = compile(
         arguments.qasm,
+        factory_mode=arguments.factory_mode,
+        planner_candidates=arguments.planner_candidates,
         cache_dir=arguments.cache_dir,
         side_ports=arguments.side_ports,
         factory=factory,

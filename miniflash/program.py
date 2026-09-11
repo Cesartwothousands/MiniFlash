@@ -112,6 +112,8 @@ class Program:
     factory: object = None
     #: factory units available to the machine
     factories: int = 0
+    factory_mode: str = "auto"
+    physical_layout: object = None
 
 
     def to_dict(self):
@@ -125,6 +127,8 @@ class Program:
             "rows": self.rows,
             "factory": {"name": self.factory.name, "dim_i": self.factory.dim_i, "dim_j": self.factory.dim_j, "interval_k": self.factory.interval_k, "render": self.factory.render} if self.factory else None,
             "factories": self.factories,
+            "factory_mode": self.factory_mode,
+            "physical_layout": self.physical_layout,
 
             "num_qubits": self.num_qubits,
             "magic_column": self.magic_column,
@@ -145,6 +149,8 @@ class Program:
         :param data: dict from :meth:`to_dict`.
         :returns: Program.
         """
+        from .physical import validate_mode
+        validate_mode(data.get("factory_mode", "auto"))
         def ref_load(kind, ref):
             if kind == "cell":
                 return Cell.from_dict(ref)
@@ -155,6 +161,8 @@ class Program:
             rows=data.get("rows", 0),
             factory=FactorySpec(**data["factory"]) if data.get("factory") else None,
             factories=data.get("factories", 0),
+            factory_mode=data.get("factory_mode", "auto"),
+            physical_layout=data.get("physical_layout"),
             num_qubits=data["num_qubits"],
             magic_column=data["magic_column"],
             magic_sides=data.get("magic_sides", 1),
@@ -179,6 +187,9 @@ class Program:
             wait_levels, compute_volume and per-injection corrections when the
             circuit has T gates.
         """
+        if self.factory_mode != "auto":
+            from .physical import statistics
+            return statistics(self)
         from .lower import build_layout
 
         layout = build_layout(self)
@@ -263,7 +274,7 @@ def _assert_hadamard_ledger(floorplan, placements, exit_bits):
                     raise RuntimeError(f"elaborate: hadamard ledger mismatch at layer {layer}, qubit {qubit}: wire delivers bit {arriving.get(qubit, 0)} but the cell was synthesized against in_bases {cell.in_bases.get(qubit, 0)} — flip landings and cell compensation have diverged")
 
 
-def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, factories=1):
+def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, factories=1, factory_mode="auto", planner_candidates=8):
     """Fuse the floorplan, synthesized cells and injections into the Program IR.
 
     :param floorplan: Floorplan.
@@ -271,10 +282,17 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
     :param events: list[InjectionEvent].
     :param channels: list[int] from synthesize, parallel to events.
     :param factory: FactorySpec | None.
-    :param factories: int, factory units.
+    :param factories: int, reserved factory units.
+    :param factory_mode: auto, backside, in_place or in_place_joint.
+    :param planner_candidates: maximum number of joint placement candidates.
     :returns: Program — cell/factory/injection macros, parity-colored inter-layer
         nets (flip marks a Hadamard landing), channels, parking, sides and exit colors.
     """
+    from .physical import validate_mode
+    validate_mode(factory_mode)
+    if factory_mode != "auto":
+        from .physical import compile_physical
+        return compile_physical(floorplan, layer_cells, events, channels, factory, factories, factory_mode, planner_candidates)
     points = place_injections(events, channels, floorplan, factory=factory, factories=factories) if events else []
     placements = _normalized_placements(floorplan, layer_cells)
     num_layers = len(placements)

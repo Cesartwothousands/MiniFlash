@@ -75,12 +75,18 @@ def write_gltf(program, path):
     :param path: str | Path of the output ``.gltf``.
     :returns: None.
     """
-    plan = _plan(program)
-    pipes = sorted(_pipes_of(program, plan), key=lambda pipe: (pipe.lo, pipe.hi, pipe.axis))
-    extent = _Extent()
-    for pipe in pipes:
-        extent.add(pipe)
-    layout = _layout(program, plan, extent)
+    if program.factory_mode != "auto":
+        from .physical import pipes_of, statistics, production_boxes
+        pipes = sorted(pipes_of(program), key=lambda pipe: (pipe.lo, pipe.hi, pipe.axis))
+        layout = statistics(program)
+        layout["factory_boxes"] = list(production_boxes(program))
+    else:
+        plan = _plan(program)
+        pipes = sorted(_pipes_of(program, plan), key=lambda pipe: (pipe.lo, pipe.hi, pipe.axis))
+        extent = _Extent()
+        for pipe in pipes:
+            extent.add(pipe)
+        layout = _layout(program, plan, extent)
     pipe_boxes = _collect_pipe_boxes(pipes)
     cubes = _collect_cubes(pipes)
     buffer, position_bytes_length, index_offset, index_bytes_length = _pack_shared_mesh()

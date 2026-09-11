@@ -1,0 +1,10 @@
+{
+  "experiments/ncf_factory_modes/partition_hotfix.py": {
+    "sha256": "b4e369745ff276c0d2e2aa74bbbb99fa9beef2ea81a29fd41871063c3efc1a15",
+    "source": "/common/home/zc366/Documents/Circuit_Optimization_Pauli/NCF/src/utils/miniflash_partition_hotfix.py"
+  },
+  "experiments/ncf_factory_modes/requirements.lock": {
+    "sha256": "b177708aa15f20ae8e5b70e0f874706807f313ba2eb49fc4e648fb2f84e1132f",
+    "source": "/common/home/zc366/Documents/Circuit_Optimization_Pauli/NCF/requirements-miniflash-lock.txt"
+  }
+}
