@@ -84,8 +84,11 @@ area/movement/demand proxy ranks candidates; the first two feasible fully
 scheduled candidates are compared by actual allocated area times runtime.
 The result is the best evaluated heuristic candidate, not a globally optimal
 layout. Infeasibility is explicit. Candidate identities and outcomes are
-recorded in the Program. Route templates are cached per channel and interned
-across repeated injections.
+recorded in the Program. Manhattan A* routes use a bounded cache keyed by
+obstacle topology. Source-target orders are reused within each channel;
+bit masks test simultaneous route conflicts. The IR interns orthogonal
+turn-point polylines, while the independent checker expands every occupied
+tile before validating it.
 
 Validation and accounting
 -------------------------

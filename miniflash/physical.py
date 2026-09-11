@@ -62,6 +62,39 @@ def shortest_path(source, goal, blocked, width, height):
     return None
 
 
+def _turn_points(path):
+    if len(path) < 3:
+        return tuple(path)
+    result = [path[0]]
+    for a, b, c in zip(path, path[1:], path[2:]):
+        if (b[0]-a[0], b[1]-a[1]) != (c[0]-b[0], c[1]-b[1]):
+            result.append(b)
+    result.append(path[-1])
+    return tuple(result)
+
+
+def _expand_route(route):
+    if not route:
+        return ()
+    expanded = [tuple(route[0])]
+    for a, b in zip(route, route[1:]):
+        dx, dy = b[0]-a[0], b[1]-a[1]
+        if (dx == 0) == (dy == 0):
+            raise ValueError("route has a diagonal or zero-length segment")
+        steps = abs(dx)+abs(dy)
+        sx, sy = dx//steps, dy//steps
+        expanded.extend((a[0]+k*sx,a[1]+k*sy) for k in range(1,steps+1))
+    return tuple(expanded)
+
+
+def _path_mask(path, width, height):
+    bits = bytearray((width*height+7)//8)
+    for x,y in path:
+        index = y*width+x
+        bits[index >> 3] |= 1 << (index & 7)
+    return int.from_bytes(bits,'little')
+
+
 def _descriptors(program, floorplan):
     result = []
     for index, macro in enumerate(program.macros):
@@ -223,7 +256,7 @@ class _Scheduler:
         self.max_parallel = 0
 
     def intern(self, route):
-        key = tuple(tuple(p) for p in route)
+        key = _turn_points(route)
         if key not in self.route_ids:
             self.route_ids[key] = len(self.routes)
             self.routes.append([list(p) for p in key])
@@ -273,6 +306,7 @@ class _Scheduler:
         base_blocked = self.blocked | occupied
         path_cache = self.path_cache
         topology = tuple(sorted(occupied))
+        target_orders = {s["id"]: sorted(queues, key=lambda q: (distance(s["buffer"], self.pos[q]), queues[q][0][0])) for s in sources}
         pending_count = len(events)
         while pending_count:
             earliest = min(self.ready[s["id"]] for s in sources)
@@ -280,16 +314,16 @@ class _Scheduler:
                 self.wait += earliest - self.time
                 self.time = earliest
             available = {s["id"] for s in sources if self.ready[s["id"]] <= self.time}
-            reserved = set()
+            reserved = 0
+            selected_qubits = set()
             batch = []
             # Source-first ordering spreads consumption over all available
             # factories. No global or per-row injection cardinality cap.
             for fid in sorted(available, key=lambda f: (self.ready[f], f)):
                 source = tuple(self.sites[fid]["buffer"])
                 chosen = None
-                for q in sorted((q for q in queues if queues[q]),
-                                key=lambda q: (distance(source, self.pos[q]), queues[q][0][0])):
-                    if any(item[1] == q for item in batch):
+                for q in target_orders[fid]:
+                    if not queues[q] or q in selected_qubits:
                         continue
                     target = self.pos[q]
                     # A J-adjacent ancilla is required by the merge gadget.
@@ -298,23 +332,24 @@ class _Scheduler:
                             continue
                         key = (topology, fid, goal)
                         if key not in path_cache:
-                            path_cache[key] = shortest_path(source, goal, base_blocked - {source}, self.width, self.height)
-                        path = path_cache[key]
+                            found = shortest_path(source, goal, base_blocked - {source}, self.width, self.height)
+                            path_cache[key] = (found, _path_mask(found,self.width,self.height) if found is not None else 0)
+                        path, mask = path_cache[key]
                         path_cache.move_to_end(key)
                         if len(path_cache) > 8192:
                             path_cache.popitem(last=False)
-                        if path is None or reserved.intersection(path):
+                        if path is None or reserved & mask:
                             continue
-                        chosen = (q, path)
+                        chosen = (q, path, mask)
                         break
                     if chosen:
                         break
                 if chosen:
-                    q, path = chosen
+                    q, path, mask = chosen
                     index, dagger = queues[q][0]
                     batch.append((index, q, dagger, fid, path))
-                    reserved.update(path)
-                    reserved.add(self.pos[q])
+                    reserved |= mask
+                    selected_qubits.add(q)
             if not batch:
                 future = [self.ready[s["id"]] for s in sources if self.ready[s["id"]] > self.time]
                 if future:
@@ -362,7 +397,7 @@ class _Scheduler:
                     self.bits[q] = op[2]
             self.time += max((d["duration"] for d in cells), default=0)
         self.inject(len(self.layout["layers"]), event_groups.get(len(self.layout["layers"]), ()))
-        self.layout.update(routes=self.routes, moves=self.moves, flips=self.flips,
+        self.layout.update(routes=self.routes, route_encoding="orthogonal_turn_points_v1", moves=self.moves, flips=self.flips,
                            cell_schedule=self.cells, injections=self.injections,
                            runtime_steps=self.time, wait_levels=self.wait,
                            peak_concurrent_injections=self.max_parallel,
@@ -496,7 +531,8 @@ def _check(program):
             require(tuple(xy) not in occupied, "parked data overlaps occupied tile")
             require(0 <= xy[0] < w and 0 <= xy[1] < h, "parked data outside chip")
             occupied.add(tuple(xy))
-    routes = [tuple(tuple(xy) for xy in path) for path in p["routes"]]
+    require(p.get("route_encoding") == "orthogonal_turn_points_v1", "unsupported route encoding")
+    routes = [_expand_route(path) for path in p["routes"]]
     for route in routes:
         require(bool(route), "empty route")
         require(all(distance(a, b) == 1 for a, b in zip(route, route[1:])), "nonlocal/disconnected route")
@@ -517,7 +553,10 @@ def _check(program):
         timeline.extend([(f[1], 1, "flip", f), (f[1] + 1, 0, "flip_end", f)])
     for mid, layer, start in p["cell_schedule"]:
         d = descriptors[mid]
-        timeline.extend([(start, 2, "cell", (d, start)), (start + d["duration"], 0, "cell_end", (d, start))])
+        if d["duration"] == 0:
+            timeline.append((start, 0.5, "zero_cell", (d, start)))
+        else:
+            timeline.extend([(start, 2, "cell", (d, start)), (start + d["duration"], 0, "cell_end", (d, start))])
     for inj in p["injections"]:
         timeline.append((inj[6], 1, "injection", inj))
         timeline.append((inj[6] + 2, 0, "injection_end", inj))
@@ -557,12 +596,17 @@ def _check(program):
         elif kind == "flip_end":
             bits[item[0]] ^= 1
             busy.pop(item[0], None)
-        elif kind == "cell":
+        elif kind in ("cell", "zero_cell"):
             d, start = item
             x, y = d["origin"]
             for q, ip, _ in d["bindings"]:
                 require(q not in busy and position[q] == (x + ip[0], y + ip[1]) and bits[q] == ip[2], "cell input continuity/parity violation")
-                busy[q] = start + d["duration"]
+                if d["duration"]:
+                    busy[q] = start + d["duration"]
+            if kind == "zero_cell":
+                for q, _, op in d["bindings"]:
+                    position[q] = (x + op[0], y + op[1])
+                    bits[q] = op[2]
         elif kind == "cell_end":
             d, _ = item
             x, y = d["origin"]

@@ -149,6 +149,21 @@ class Fabrics(unittest.TestCase):
             p.physical_layout['cell_schedule'].pop()
             self.assertTrue(check(p))
 
+    def test_zero_duration_identity_between_injections(self):
+        from miniflash import elaborate, get_factory
+        from miniflash.floorplan import solve_floorplan
+        from miniflash.synthesis import Cell
+        from miniflash.partition import InjectionEvent
+        cell = Cell([5,5,1], [
+            {'name':'in_0','dir':'K','offset':[2,2,-1],'parity':0},
+            {'name':'out_0','dir':'K','offset':[2,2,1],'parity':0}], [], in_bases={0:0})
+        for mode in ('backside','in_place','in_place_joint'):
+            fp = solve_floorplan([[0]],1,with_magic=True)
+            p = elaborate(fp,[[cell]],events=[InjectionEvent(0,0,False),InjectionEvent(1,0,True)],
+                          channels=[0,1],factory=get_factory('15-to-1'),factories=1,factory_mode=mode)
+            self.assertEqual(check(p),[])
+            self.assertEqual(p.stats()['runtime_steps'],24)
+
     def test_unreachable_and_invalid_options(self):
         self.assertIsNone(shortest_path((0,0),(2,0),{(1,y) for y in range(3)},3,3))
         for mode in ('invalid',):

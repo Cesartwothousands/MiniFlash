@@ -302,7 +302,8 @@ def submit(args):
     shell.write_text('#!/bin/bash\nset -euo pipefail\ncd '+shlex.quote(str(ROOT))+'\nexec '+shlex.join([sys.executable,str(Path(__file__).resolve()),'worker','--run',str(run),'--task'])+' "$SLURM_ARRAY_TASK_ID"\n')
     result=subprocess.check_output(['sbatch','--parsable','--cpus-per-task=1','--mem=32G','--time=08:15:00',
                                     '--job-name=mf_fabrics','--array='+indices+'%636','--output='+str(logdir/'%A_%a.out'),
-                                    '--error='+str(logdir/'%A_%a.err'),str(shell)],text=True).strip().split(';')[0]
+                                    '--error='+str(logdir/'%A_%a.err'),
+                                    *(['--dependency=afterok:'+args.afterok] if args.afterok else []),str(shell)],text=True).strip().split(';')[0]
     previous=read(run/'submission.json') if (run/'submission.json').exists() else {'array_job_ids':[]}
     previous['array_job_ids'].append(result);previous.update(run_dir=str(run),task_count=636,submitted_utc=datetime.now(timezone.utc).isoformat())
     finalscript=run/f'finalize_{result}.sh'
@@ -352,7 +353,9 @@ def main():
             p.add_argument('--task',required=True,type=int);p.add_argument('--render',action='store_true')
         if name=='one':p.add_argument('--mode',choices=MODES,required=True)
         if name=='worker':p.add_argument('--modes',nargs='+',choices=MODES,default=MODES)
-        if name=='submit':p.add_argument('--indices')
+        if name=='submit':
+            p.add_argument('--indices')
+            p.add_argument('--afterok',help='wait for this preflight array to succeed')
     args=parser.parse_args()
     result=globals()[args.action](args)
     return result or 0
